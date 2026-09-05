@@ -6,11 +6,14 @@ export interface ParsedArgs {
   task: string;
   explain: boolean;
   decompose: boolean;
+  /** Max subtasks run concurrently when --decompose is set. null = sequential. */
+  parallel: number | null;
 }
 
 export class ArgsError extends Error {}
 
-const USAGE = 'Usage: dispatch run --tier <0|1|2> [--explain] [--decompose] "<task>"';
+const USAGE =
+  'Usage: dispatch run --tier <0|1|2> [--explain] [--decompose] [--parallel <N>] "<task>"';
 
 export function parseArgs(argv: string[]): ParsedArgs {
   if (argv[0] !== "run") {
@@ -20,6 +23,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
   let tier: Tier | null = null;
   let explain = false;
   let decompose = false;
+  let parallel: number | null = null;
   const positional: string[] = [];
 
   for (let i = 1; i < argv.length; i++) {
@@ -35,6 +39,13 @@ export function parseArgs(argv: string[]): ParsedArgs {
       explain = true;
     } else if (arg === "--decompose") {
       decompose = true;
+    } else if (arg === "--parallel") {
+      i++;
+      const value = argv[i];
+      if (!/^\d+$/.test(value ?? "") || Number(value) < 1) {
+        throw new ArgsError(`--parallel needs a positive integer (subtasks run at once), got "${value ?? ""}". ${USAGE}`);
+      }
+      parallel = Number(value);
     } else {
       positional.push(arg);
     }
@@ -47,5 +58,5 @@ export function parseArgs(argv: string[]): ParsedArgs {
     throw new ArgsError(`Task description is required. ${USAGE}`);
   }
 
-  return { command: "run", tier, task: positional.join(" "), explain, decompose };
+  return { command: "run", tier, task: positional.join(" "), explain, decompose, parallel };
 }

@@ -9,6 +9,7 @@ subscription tool, or a metered API every time.
 ```
 dispatch run --tier <0|1|2> "<task description>"
 dispatch run --tier <0|1|2> --decompose "<complex multi-part task>"
+dispatch run --tier <0|1|2> --decompose --parallel 4 "<complex multi-part task>"
 ```
 
 You give it two things: the task, and how sensitive the data in it is
@@ -33,6 +34,7 @@ Every run appends a tier-redacted record to `~/.dispatch/audit.jsonl`.
 | ✅ | Tiered routing — explicit `--tier`, never inferred |
 | ✅ | Cascade-with-verification: cheapest eligible provider first, escalates on empty/refused/failed output |
 | ✅ | Optional task decomposition (`--decompose`): split a compound task into subtasks routed at the same tier, then compose the answers |
+| ✅ | Optional concurrent subtasks (`--decompose --parallel <N>`): run up to N subtasks at once (default sequential) |
 | ✅ | Adapters for a local model, a metered API, Codex, and Claude Code — all real installed CLIs, no reimplemented SDKs |
 | ✅ | Argv-array subprocess exec only — no shell-string interpolation |
 | ✅ | Per-run timeout with SIGTERM → SIGKILL escalation |
@@ -78,8 +80,9 @@ layer itself.
 ## Roadmap
 
 - [x] Task decomposition into routed subtasks (v1.1, `--decompose`)
+- [x] Concurrent subtask execution within a decomposed run (`--decompose --parallel <N>`, opt-in)
 - [ ] Real `gaze` browser-automation flow, replacing the current stub
-- [ ] Concurrent subtask execution / subagent spawning (decomposition currently runs subtasks sequentially)
+- [ ] Standalone subagent spawning / long-lived concurrent agents (beyond one run's subtasks)
 - [ ] Shared memory / knowledge store across runs
 - [ ] Broader security-hardening layer beyond the tier gate
 - [ ] Desktop overlay UI

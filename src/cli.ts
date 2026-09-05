@@ -24,7 +24,7 @@ const packageJson = require("../package.json") as { name: string; version: strin
 export const HELP_TEXT = `dispatch — routes a task to the right AI provider CLI, by data tier.
 
 Usage:
-  dispatch run --tier <0|1|2> [--explain] [--decompose] "<task>"
+  dispatch run --tier <0|1|2> [--explain] [--decompose] [--parallel <N>] "<task>"
   dispatch --help | -h
   dispatch --version | -v
 
@@ -40,6 +40,9 @@ Options for "run":
                          2 = already public (open-source code, published docs)
   --decompose          Split the task into subtasks (each routed at the same
                        tier), then compose the answers.
+  --parallel <N>       With --decompose, run up to N subtasks concurrently
+                       (default: sequential). Only use for independent subtasks;
+                       concurrent runs may interleave side effects.
   --explain            Print the routing trace: which providers ran and why.
 
 Examples:
@@ -120,7 +123,7 @@ export async function main(
     throw err;
   }
 
-  const { tier, task, explain, decompose } = parsed;
+  const { tier, task, explain, decompose, parallel } = parsed;
 
   const scan = scanForSecrets(task);
   if (scan.suspicious && tier > 0) {
@@ -153,7 +156,7 @@ export async function main(
   // Decomposed path: split at the parent tier, route each subtask, compose.
   if (decompose) {
     const startedAt = Date.now();
-    const outcome = await runDecomposed(task, tier, adapters);
+    const outcome = await runDecomposed(task, tier, adapters, undefined, undefined, parallel ?? 1);
     const totalDurationMs = Date.now() - startedAt;
 
     // Audit every provider cascade independently (redaction applies per task).
@@ -191,6 +194,10 @@ export async function main(
 
     stdout(outcome.finalOutput + "\n");
     return outcome.finalStatus === "all-failed" ? 1 : 0;
+  }
+
+  if (parallel !== null) {
+    stderr("Note: --parallel only applies with --decompose; ignored for this single run.\n");
   }
 
   const startedAt = Date.now();

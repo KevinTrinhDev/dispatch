@@ -134,16 +134,22 @@ in the registry, and stops launching once the budget is exhausted.
 
 ### 4.3 Executing subtasks
 
-Each validated subtask string is then run **sequentially** through the full
-`runCascade` at the parent tier. Sequential (not concurrent) is a deliberate v1
-choice:
+Each validated subtask string is run through the full `runCascade` at the parent
+tier. The default is **sequential**, which is deliberate:
 
-- audit ordering is deterministic (one record per subtask, in order);
+- audit records are appended in deterministic plan order;
 - each provider call can have side effects (file writes, commits — v1 spec §5),
-  so concurrent side-effecting runs are unsafe without a transaction story;
-- the timeout model stays simple: each sub-run honors the same per-call
-  timeout. A single global time budget is deferred to the future "concurrent
-  subagent spawning" spec.
+  so running side-effecting subtasks concurrently is unsafe without a
+  transaction story;
+- a single shared `AttemptBudget` cleanly bounds sequential cost.
+
+`--parallel <N>` is an **opt-in** override that runs up to N subtasks
+concurrently (still sharing the attempt budget and the parent tier). It is
+intended only for subtasks that are known to be read-only/independent; running
+concurrent side-effecting subtasks is the caller's responsibility. Audit records
+are written after all subtasks complete, in plan order, so `--parallel` does not
+scramble the audit trail; `mapLimit` preserves input order in the composed
+output. `--parallel` is ignored (with a note) when `--decompose` is not set.
 
 Each subtask independently cascades/escalates across its tier's eligible
 providers exactly as v1 does for a top-level task.
@@ -281,3 +287,5 @@ Deferred (documented, low risk, not blocking):
 - 2026-09-05 (rev 0): initial spec.
 - 2026-09-05 (rev 1): independent hardening review; added §10 and integrated
   F1/F2/F3 fixes into §4/§6.
+- 2026-09-05 (rev 2): opt-in `--parallel <N>` concurrent subtask execution
+  (§4.3), sharing the attempt budget; audit stays plan-ordered.

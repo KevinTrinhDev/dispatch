@@ -10,7 +10,18 @@ describe("parseArgs", () => {
       task: "summarize this file",
       explain: false,
       decompose: false,
+      parallel: null,
     });
+  });
+
+  it("parses the --parallel flag", () => {
+    const result = parseArgs(["run", "--tier", "2", "--decompose", "--parallel", "4", "do the thing"]);
+    expect(result.parallel).toBe(4);
+  });
+
+  it("throws ArgsError when --parallel is not a positive integer", () => {
+    expect(() => parseArgs(["run", "--tier", "2", "--parallel", "0", "x"])).toThrow(ArgsError);
+    expect(() => parseArgs(["run", "--tier", "2", "--parallel", "abc", "x"])).toThrow(ArgsError);
   });
 
   it("parses the --decompose flag", () => {

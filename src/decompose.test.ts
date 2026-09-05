@@ -169,6 +169,56 @@ describe("runDecomposed", () => {
     expect(outcome.subtasks.every((s) => s.outcome.finalStatus === "all-failed")).toBe(true);
     expect(outcome.finalStatus).toBe("all-failed");
   });
+
+  it("runs subtasks concurrently up to the parallel limit and preserves plan order", async () => {
+    let active = 0;
+    let maxActive = 0;
+    const plan = ["part 1", "part 2", "part 3", "part 4"];
+    const adapter: ProviderAdapter = {
+      name: "delegate-free",
+      run: async (task: string) => {
+        active += 1;
+        maxActive = Math.max(maxActive, active);
+        await new Promise((r) => setTimeout(r, 4));
+        active -= 1;
+        if (task.includes(DECOMPOSE_INSTRUCTION)) {
+          return { status: "ok", output: JSON.stringify(plan), exitCode: 0 };
+        }
+        return { status: "ok", output: `answer for ${task}`, exitCode: 0 };
+      },
+    };
+
+    const outcome = await runDecomposed("do the thing", 0, { "delegate-free": adapter }, 120_000, undefined, 3);
+
+    expect(outcome.decomposed).toBe(true);
+    expect(outcome.subtasks).toHaveLength(plan.length);
+    // Results are still reported in plan order, and <=3 subtasks were in flight.
+    expect(outcome.subtasks.map((s) => s.subtask)).toEqual(plan);
+    expect(outcome.subtasks.every((s) => s.outcome.finalStatus === "verified")).toBe(true);
+    expect(maxActive).toBe(3);
+  });
+
+  it("runs subtasks sequentially (max 1 in flight) when parallel is 1", async () => {
+    let active = 0;
+    let maxActive = 0;
+    const plan = ["part 1", "part 2", "part 3"];
+    const adapter: ProviderAdapter = {
+      name: "delegate-free",
+      run: async (task: string) => {
+        active += 1;
+        maxActive = Math.max(maxActive, active);
+        await new Promise((r) => setTimeout(r, 2));
+        active -= 1;
+        if (task.includes(DECOMPOSE_INSTRUCTION)) {
+          return { status: "ok", output: JSON.stringify(plan), exitCode: 0 };
+        }
+        return { status: "ok", output: `answer for ${task}`, exitCode: 0 };
+      },
+    };
+
+    await runDecomposed("do the thing", 0, { "delegate-free": adapter }, 120_000, undefined, 1);
+    expect(maxActive).toBe(1);
+  });
 });
 
 describe("planSubtasks", () => {

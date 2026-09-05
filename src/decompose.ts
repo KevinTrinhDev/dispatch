@@ -124,18 +124,43 @@ function unexecutedOutcome(tier: Tier): CascadeOutcome {
 }
 
 /**
+ * Run `fn` over every item with at most `limit` in flight at once, preserving
+ * input order in the returned array.
+ */
+async function mapLimit<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
+  const out = new Array<R>(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const i = next++;
+      out[i] = await fn(items[i], i);
+    }
+  };
+  const n = Math.max(1, Math.min(limit, items.length));
+  await Promise.all(Array.from({ length: n }, () => worker()));
+  return out;
+}
+
+/**
  * Run a task, optionally decomposed. When a decomposer plan is produced, each
- * subtask runs sequentially through the full cascade at the parent tier and the
- * verified outputs are composed. When no usable plan is produced, falls back to
- * a single cascade on the whole task (never dropping or half-running the task).
- * A shared AttemptBudget bounds total provider launches across all cascades.
+ * subtask runs through the full cascade at the parent tier and the verified
+ * outputs are composed in plan order. When no usable plan is produced, falls
+ * back to a single cascade on the whole task (never dropping or half-running
+ * the task). A shared AttemptBudget bounds total provider launches across all
+ * cascades. `parallel` > 1 runs subtasks concurrently (opt-in; sequential by
+ * default, since concurrent side-effecting subtasks are the caller's risk).
  */
 export async function runDecomposed(
   task: string,
   tier: Tier,
   adapters: AdapterRegistry,
   timeoutMs: number = DEFAULT_TIMEOUT_MS,
-  budget: AttemptBudget = { remaining: MAX_TOTAL_ATTEMPTS }
+  budget: AttemptBudget = { remaining: MAX_TOTAL_ATTEMPTS },
+  parallel: number = 1
 ): Promise<DecompositionOutcome> {
   const decompStartedAt = Date.now();
   const planned = await planSubtasks(task, tier, adapters, timeoutMs, budget);
@@ -154,17 +179,17 @@ export async function runDecomposed(
     };
   }
 
-  const subtasks: DecomposedSubtask[] = [];
-  for (const subtask of planned.plan) {
+  const executeSubtask = async (subtask: string): Promise<DecomposedSubtask> => {
     // Stop launching subtasks once the shared attempt budget is exhausted.
     if (budget.remaining <= 0) {
-      subtasks.push({ subtask, outcome: unexecutedOutcome(tier), durationMs: 0 });
-      continue;
+      return { subtask, outcome: unexecutedOutcome(tier), durationMs: 0 };
     }
     const startedAt = Date.now();
     const outcome = await runCascade(subtask, tier, adapters, timeoutMs, undefined, budget);
-    subtasks.push({ subtask, outcome, durationMs: Date.now() - startedAt });
-  }
+    return { subtask, outcome, durationMs: Date.now() - startedAt };
+  };
+
+  const subtasks = await mapLimit(planned.plan, parallel, executeSubtask);
 
   const finalStatus = aggregateStatus(subtasks);
   // When nothing produced usable output, emit an empty final output rather than

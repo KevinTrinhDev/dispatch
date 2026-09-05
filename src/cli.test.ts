@@ -231,6 +231,39 @@ describe("main", () => {
     });
   });
 
+  it("runs subtasks concurrently when --decompose --parallel is set", async () => {
+    await withTempAuditPath(async (auditLogPath) => {
+      let active = 0;
+      let maxActive = 0;
+      const decomposeFree: ProviderAdapter = {
+        name: "delegate-free",
+        run: async (task) => {
+          active += 1;
+          maxActive = Math.max(maxActive, active);
+          await new Promise((r) => setTimeout(r, 3));
+          active -= 1;
+          if (task.includes(DECOMPOSE_INSTRUCTION)) {
+            return { status: "ok", output: JSON.stringify(["a", "b", "c"]), exitCode: 0 };
+          }
+          return { status: "ok", output: `answer for ${task}`, exitCode: 0 };
+        },
+      };
+      const adapters: AdapterRegistry = { "delegate-free": decomposeFree };
+      const stdoutLines: string[] = [];
+
+      const code = await main(
+        ["run", "--tier", "1", "--decompose", "--parallel", "2", "build it"],
+        (s) => stdoutLines.push(s),
+        () => {},
+        { adapters, auditLogPath }
+      );
+
+      expect(code).toBe(0);
+      expect(stdoutLines.join("")).toContain("[subtask 3]");
+      expect(maxActive).toBe(2);
+    });
+  });
+
   it("writes one per-subtask audit record plus one decomposition summary (--decompose)", async () => {
     await withTempAuditPath(async (auditLogPath) => {
       // Long texts whose sensitive tails sit well beyond the 40-char preview.
