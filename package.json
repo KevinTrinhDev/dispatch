@@ -1,14 +1,21 @@
 {
   "name": "dispatch-cli",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Routes a task to the right AI provider CLI based on an explicit data-sensitivity tier.",
   "type": "module",
   "license": "Apache-2.0",
   "bin": {
     "dispatch": "./dist/cli.js"
   },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
   "scripts": {
     "build": "tsc",
+    "prepare": "npm run build",
     "test": "vitest run",
     "dev": "tsx src/cli.ts"
   },

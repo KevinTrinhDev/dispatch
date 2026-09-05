@@ -23,6 +23,9 @@ subtask independently through the cascade and composes the answers — so a big
 task gets several focused runs instead of one stretched one. Subtasks always
 inherit the run's explicit tier; Dispatch never re-tiers or downgrades them.
 
+`dispatch --help` lists every flag; `dispatch --version` prints the version.
+Every run appends a tier-redacted record to `~/.dispatch/audit.jsonl`.
+
 ## Features
 
 | | |

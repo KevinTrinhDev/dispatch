@@ -32,6 +32,20 @@ describe("main", () => {
     expect(stderrLines.join("")).toContain("--tier");
   });
 
+  it("prints help and exits 0 for --help", async () => {
+    const stdoutLines: string[] = [];
+    const code = await main(["--help"], (s) => stdoutLines.push(s), () => {});
+    expect(code).toBe(0);
+    expect(stdoutLines.join("")).toContain("dispatch run --tier");
+  });
+
+  it("prints the version and exits 0 for --version", async () => {
+    const stdoutLines: string[] = [];
+    const code = await main(["--version"], (s) => stdoutLines.push(s), () => {});
+    expect(code).toBe(0);
+    expect(stdoutLines.join("").trim()).toMatch(/^\d+\.\d+\.\d+$/);
+  });
+
   it("runs the cascade and prints the final output on success", async () => {
     await withTempAuditPath(async (auditLogPath) => {
       const adapters: AdapterRegistry = { "delegate-free": fakeAdapter("delegate-free", "the answer") };

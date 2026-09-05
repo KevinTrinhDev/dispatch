@@ -2,6 +2,7 @@
 import { createInterface } from "node:readline/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { createRequire } from "node:module";
 import { parseArgs, ArgsError } from "./args.js";
 import { runCascade, type AdapterRegistry } from "./cascade.js";
 import { runDecomposed } from "./decompose.js";
@@ -16,6 +17,37 @@ import { createGazeAdapter } from "./adapters/gaze.js";
 import type { DecompositionOutcome } from "./types.js";
 
 const DEFAULT_AUDIT_LOG_PATH = join(homedir(), ".dispatch", "audit.jsonl");
+
+const require = createRequire(import.meta.url);
+const packageJson = require("../package.json") as { name: string; version: string };
+
+export const HELP_TEXT = `dispatch — routes a task to the right AI provider CLI, by data tier.
+
+Usage:
+  dispatch run --tier <0|1|2> [--explain] [--decompose] "<task>"
+  dispatch --help | -h
+  dispatch --version | -v
+
+Commands:
+  run                  Route one task through the provider cascade and print the answer.
+  --help, -h           Show this help.
+  --version, -v        Print the dispatch version.
+
+Options for "run":
+  --tier <0|1|2>       Data sensitivity of the task. REQUIRED, never inferred:
+                         0 = never leaves this machine (secrets, keys)
+                         1 = your own accounts only (source, infra config)
+                         2 = already public (open-source code, published docs)
+  --decompose          Split the task into subtasks (each routed at the same
+                       tier), then compose the answers.
+  --explain            Print the routing trace: which providers ran and why.
+
+Examples:
+  dispatch run --tier 0 "what public key format is this?"
+  dispatch run --tier 2 --decompose "write a script, its README, and a test"
+
+Every run appends a tier-redacted record to ~/.dispatch/audit.jsonl.
+`;
 
 export interface MainDeps {
   adapters?: AdapterRegistry;
@@ -67,6 +99,16 @@ export async function main(
   stderr: (s: string) => void,
   deps: MainDeps = {}
 ): Promise<number> {
+  const first = argv[0] ?? "";
+  if (first === "--help" || first === "-h" || first === "help") {
+    stdout(HELP_TEXT);
+    return 0;
+  }
+  if (first === "--version" || first === "-v") {
+    stdout(`${packageJson.version}\n`);
+    return 0;
+  }
+
   let parsed;
   try {
     parsed = parseArgs(argv);
