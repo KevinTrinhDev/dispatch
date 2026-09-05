@@ -41,6 +41,30 @@ describe("runCascade", () => {
     expect(outcome.finalProvider).toBe("claude");
   });
 
+  it("escalates past an error result", async () => {
+    const free = fakeAdapter("delegate-free", async () => ({ status: "error", message: "boom" }));
+    const claude = fakeAdapter("claude", async () => ({ status: "ok", output: "answer", exitCode: 0 }));
+    const adapters: AdapterRegistry = { "delegate-free": free, claude };
+
+    const outcome = await runCascade("do a thing", 1, adapters);
+
+    expect(outcome.finalStatus).toBe("verified");
+    expect(outcome.finalProvider).toBe("claude");
+    expect(outcome.finalOutput).toBe("answer");
+  });
+
+  it("escalates past a partial result", async () => {
+    const free = fakeAdapter("delegate-free", async () => ({ status: "partial", output: "half", reason: "cut off" }));
+    const claude = fakeAdapter("claude", async () => ({ status: "ok", output: "answer", exitCode: 0 }));
+    const adapters: AdapterRegistry = { "delegate-free": free, claude };
+
+    const outcome = await runCascade("do a thing", 1, adapters);
+
+    expect(outcome.finalStatus).toBe("verified");
+    expect(outcome.finalProvider).toBe("claude");
+    expect(outcome.finalOutput).toBe("answer");
+  });
+
   it("returns unverified with the last output when nothing in the cascade verifies", async () => {
     const free = fakeAdapter("delegate-free", async () => ({ status: "ok", output: "", exitCode: 0 }));
     const adapters: AdapterRegistry = { "delegate-free": free };
