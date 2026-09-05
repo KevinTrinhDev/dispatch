@@ -73,18 +73,30 @@ export async function main(
       gaze: createGazeAdapter(tier),
     };
 
+  const startedAt = Date.now();
   const outcome = await runCascade(task, tier, adapters);
+  const durationMs = Date.now() - startedAt;
 
-  const record = buildAuditRecord(task, tier, outcome);
+  const record = buildAuditRecord(task, tier, outcome, durationMs);
   await appendAuditRecord(deps.auditLogPath ?? DEFAULT_AUDIT_LOG_PATH, record);
 
   if (explain) {
     stdout(`Routing trace (tier ${tier}):\n`);
     for (const attempt of outcome.attempts) {
       const verifiedNote = attempt.result.status === "ok" ? `, verified=${attempt.verified}` : "";
-      stdout(`  - ${attempt.provider}: ${attempt.result.status}${verifiedNote}\n`);
+      let detail = "";
+      if (attempt.result.status === "partial") {
+        detail = ` (${attempt.result.reason})`;
+      } else if (attempt.result.status === "error") {
+        detail = ` (${attempt.result.message})`;
+      }
+      stdout(`  - ${attempt.provider}: ${attempt.result.status}${verifiedNote}${detail}\n`);
     }
     stdout(`Final: ${outcome.finalStatus} via ${outcome.finalProvider ?? "none"}\n\n`);
+  }
+
+  if (outcome.finalStatus === "unverified") {
+    stderr(`Warning: response from ${outcome.finalProvider} could not be verified as a real answer.\n`);
   }
 
   stdout(outcome.finalOutput + "\n");

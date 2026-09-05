@@ -54,8 +54,9 @@ thing:
   trained classifier approach — see the design spec for the reasoning.
 
 Dispatch's actual niche: routing across full local CLI agents (not raw APIs),
-including a browser-automation path to consumer chat UIs, keyed primarily on
-data-sensitivity tier rather than cost or latency alone.
+keyed primarily on data-sensitivity tier rather than cost or latency alone.
+A browser-automation path to consumer chat UIs is planned but not yet
+implemented — see the note under Status.
 
 ## Naming
 
@@ -69,7 +70,18 @@ widely-used config framework) and `relay` (Facebook's Relay GraphQL client).
 
 v1 covers routing and handoff only. Task decomposition, a shared memory
 store, a broader security-hardening layer, and a desktop UI are each
-separate, not-yet-started projects — see
+separate, not-yet-started projects.
+
+The `gaze` provider (browser-driven consumer chat UIs) is a **documented stub
+in v1**: it is registered in the cascade and correctly excluded from Tier 0,
+but its `run` method always returns an `error` result rather than driving a
+real browser. Relaying a task to a browser-based chat needs a multi-step flow
+(navigate, fill the input, submit, wait, scrape the response) that doesn't fit
+the one-shot shell-command shape every other adapter uses; building that
+properly is follow-up work, not part of v1. Dispatch will simply escalate past
+`gaze` to the next eligible provider until that lands.
+
+See
 [the design spec](docs/superpowers/specs/2026-09-05-dispatch-router-design.md#11-open-items-for-future-specs-not-this-one)
 for the full list.
 

@@ -118,6 +118,57 @@ describe("main", () => {
     });
   });
 
+  it("prints an unverified warning to stderr when the final status is unverified, and not when verified", async () => {
+    await withTempAuditPath(async (auditLogPath) => {
+      const partialAdapter: ProviderAdapter = {
+        name: "delegate-free",
+        run: vi.fn(async () => ({ status: "partial" as const, output: "half an answer", reason: "cut off" })),
+      };
+      const adapters: AdapterRegistry = { "delegate-free": partialAdapter };
+      const stderrLines: string[] = [];
+
+      const code = await main(["run", "--tier", "0", "do a thing"], () => {}, (s) => stderrLines.push(s), {
+        adapters,
+        auditLogPath,
+      });
+
+      expect(code).toBe(0);
+      expect(stderrLines.join("")).toMatch(/unverified|could not be verified/i);
+    });
+
+    await withTempAuditPath(async (auditLogPath) => {
+      const adapters: AdapterRegistry = { "delegate-free": fakeAdapter("delegate-free", "the answer") };
+      const stderrLines: string[] = [];
+
+      const code = await main(["run", "--tier", "0", "do a thing"], () => {}, (s) => stderrLines.push(s), {
+        adapters,
+        auditLogPath,
+      });
+
+      expect(code).toBe(0);
+      expect(stderrLines.join("")).not.toMatch(/could not be verified/i);
+    });
+  });
+
+  it("includes a failed attempt's reason/message in --explain output", async () => {
+    await withTempAuditPath(async (auditLogPath) => {
+      const failingAdapter: ProviderAdapter = {
+        name: "delegate-free",
+        run: vi.fn(async () => ({ status: "error" as const, message: "boom: nonexistent subcommand" })),
+      };
+      const adapters: AdapterRegistry = { "delegate-free": failingAdapter, claude: fakeAdapter("claude", "the answer") };
+      const stdoutLines: string[] = [];
+
+      await main(["run", "--tier", "1", "--explain", "do a thing"], (s) => stdoutLines.push(s), () => {}, {
+        adapters,
+        auditLogPath,
+      });
+
+      const combined = stdoutLines.join("");
+      expect(combined).toContain("boom: nonexistent subcommand");
+    });
+  });
+
   it("never prompts for confirmation on ordinary, non-suspicious task text", async () => {
     await withTempAuditPath(async (auditLogPath) => {
       const adapter = fakeAdapter("delegate-free", "the answer");

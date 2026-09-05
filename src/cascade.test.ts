@@ -66,7 +66,11 @@ describe("runCascade", () => {
   });
 
   it("returns unverified with the last output when nothing in the cascade verifies", async () => {
-    const free = fakeAdapter("delegate-free", async () => ({ status: "ok", output: "", exitCode: 0 }));
+    const free = fakeAdapter("delegate-free", async () => ({
+      status: "ok",
+      output: "I cannot help with that",
+      exitCode: 0,
+    }));
     const adapters: AdapterRegistry = { "delegate-free": free };
 
     const outcome = await runCascade("do a thing", 0, adapters);
@@ -83,6 +87,17 @@ describe("runCascade", () => {
 
     expect(outcome.finalStatus).toBe("all-failed");
     expect(outcome.finalProvider).toBeNull();
+  });
+
+  it("does not treat a partial result with empty output as usable, and reports all-failed", async () => {
+    const free = fakeAdapter("delegate-free", async () => ({ status: "partial", output: "   ", reason: "cut off" }));
+    const adapters: AdapterRegistry = { "delegate-free": free };
+
+    const outcome = await runCascade("do a thing", 0, adapters);
+
+    expect(outcome.finalStatus).toBe("all-failed");
+    expect(outcome.finalProvider).toBeNull();
+    expect(outcome.finalOutput).toBe("");
   });
 
   it("never invokes gaze for tier 0, even if gaze is registered in the adapter map", async () => {

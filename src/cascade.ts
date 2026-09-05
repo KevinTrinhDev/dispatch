@@ -57,7 +57,9 @@ export async function runCascade(
   }
 
   const lastUsable = [...attempts].reverse().find(
-    (a) => a.result.status === "ok" || a.result.status === "partial"
+    (a) =>
+      (a.result.status === "ok" || a.result.status === "partial") &&
+      a.result.output.trim().length > 0
   );
   const finalOutput =
     lastUsable && (lastUsable.result.status === "ok" || lastUsable.result.status === "partial")

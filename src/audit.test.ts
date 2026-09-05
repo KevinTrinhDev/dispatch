@@ -26,28 +26,39 @@ const LONG_SECRET_TASK =
 
 describe("buildAuditRecord", () => {
   it("truncates task text to 40 chars for tier 0", () => {
-    const record = buildAuditRecord(LONG_SECRET_TASK, 0, sampleOutcome);
+    const record = buildAuditRecord(LONG_SECRET_TASK, 0, sampleOutcome, 1234);
     expect(record.taskPreview.length).toBeLessThanOrEqual(40);
     expect(record.taskPreview).not.toContain("BEGIN RSA PRIVATE KEY");
   });
 
   it("truncates task text to 40 chars for tier 1", () => {
-    const record = buildAuditRecord(LONG_SECRET_TASK, 1, sampleOutcome);
+    const record = buildAuditRecord(LONG_SECRET_TASK, 1, sampleOutcome, 1234);
     expect(record.taskPreview.length).toBeLessThanOrEqual(40);
   });
 
   it("keeps the full task text for tier 2", () => {
-    const record = buildAuditRecord(LONG_SECRET_TASK, 2, { ...sampleOutcome, tier: 2 });
+    const record = buildAuditRecord(LONG_SECRET_TASK, 2, { ...sampleOutcome, tier: 2 }, 1234);
     expect(record.taskPreview).toBe(LONG_SECRET_TASK);
   });
 
+  it("caps the tier 2 taskPreview at MAX_TIER_2_PREVIEW_LENGTH for a very long task", () => {
+    const hugeTask = "x".repeat(10_000);
+    const record = buildAuditRecord(hugeTask, 2, { ...sampleOutcome, tier: 2 }, 1234);
+    expect(record.taskPreview.length).toBeLessThanOrEqual(4000);
+  });
+
+  it("includes the durationMs passed in", () => {
+    const record = buildAuditRecord(LONG_SECRET_TASK, 0, sampleOutcome, 987);
+    expect(record.durationMs).toBe(987);
+  });
+
   it("always includes a sha256 hash of the full task text, regardless of tier", () => {
-    const record = buildAuditRecord(LONG_SECRET_TASK, 0, sampleOutcome);
+    const record = buildAuditRecord(LONG_SECRET_TASK, 0, sampleOutcome, 1234);
     expect(record.taskHash).toMatch(/^[a-f0-9]{64}$/);
   });
 
   it("never serializes the full secret text for tier 0, even inside JSON.stringify", () => {
-    const record = buildAuditRecord(LONG_SECRET_TASK, 0, sampleOutcome);
+    const record = buildAuditRecord(LONG_SECRET_TASK, 0, sampleOutcome, 1234);
     const serialized = JSON.stringify(record);
     expect(serialized).not.toContain("MIIEowIBAAKCAQEA1234567890");
   });
@@ -63,7 +74,7 @@ describe("appendAuditRecord", () => {
   it("creates the log directory and appends a valid JSON line", async () => {
     dir = await mkdtemp(join(tmpdir(), "dispatch-audit-"));
     const logPath = join(dir, "nested", "audit.jsonl");
-    const record = buildAuditRecord("do a thing", 2, sampleOutcome);
+    const record = buildAuditRecord("do a thing", 2, sampleOutcome, 1234);
 
     await appendAuditRecord(logPath, record);
 
@@ -76,8 +87,8 @@ describe("appendAuditRecord", () => {
   it("appends multiple concurrent writes as separate valid JSON lines", async () => {
     dir = await mkdtemp(join(tmpdir(), "dispatch-audit-"));
     const logPath = join(dir, "audit.jsonl");
-    const recordA = buildAuditRecord("task A", 2, sampleOutcome);
-    const recordB = buildAuditRecord("task B", 2, sampleOutcome);
+    const recordA = buildAuditRecord("task A", 2, sampleOutcome, 1234);
+    const recordB = buildAuditRecord("task B", 2, sampleOutcome, 1234);
 
     await Promise.all([appendAuditRecord(logPath, recordA), appendAuditRecord(logPath, recordB)]);
 

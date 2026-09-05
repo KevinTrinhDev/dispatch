@@ -17,25 +17,24 @@ describe("gaze adapter", () => {
     expect(runCommandMock).not.toHaveBeenCalled();
   });
 
-  it("calls runCommand for tier 1", async () => {
+  it("returns a not-implemented error for tier 1 without ever calling runCommand", async () => {
     const adapter = createGazeAdapter(1);
-    await adapter.run("look up this order status", { timeoutMs: 5000 });
-    expect(runCommandMock).toHaveBeenCalledWith("gaze", ["prompt", "look up this order status"], 5000);
-  });
-
-  it("calls runCommand for tier 2", async () => {
-    const adapter = createGazeAdapter(2);
-    await adapter.run("look up public docs", { timeoutMs: 5000 });
-    expect(runCommandMock).toHaveBeenCalledWith("gaze", ["prompt", "look up public docs"], 5000);
-  });
-
-  it("never passes an auto-approve or bypass flag to gaze", async () => {
-    const adapter = createGazeAdapter(2);
-    await adapter.run("do something", { timeoutMs: 5000 });
-    const [, args] = runCommandMock.mock.calls[0];
-    for (const arg of args as string[]) {
-      expect(arg.toLowerCase()).not.toMatch(/--yes|--approve|--auto-approve|--grant/);
+    const result = await adapter.run("look up this order status", { timeoutMs: 5000 });
+    expect(result.status).toBe("error");
+    if (result.status === "error") {
+      expect(result.message).toMatch(/not yet implemented/i);
     }
+    expect(runCommandMock).not.toHaveBeenCalled();
+  });
+
+  it("returns a not-implemented error for tier 2 without ever calling runCommand", async () => {
+    const adapter = createGazeAdapter(2);
+    const result = await adapter.run("look up public docs", { timeoutMs: 5000 });
+    expect(result.status).toBe("error");
+    if (result.status === "error") {
+      expect(result.message).toMatch(/not yet implemented/i);
+    }
+    expect(runCommandMock).not.toHaveBeenCalled();
   });
 
   it("adapter name is always gaze regardless of tier", () => {
