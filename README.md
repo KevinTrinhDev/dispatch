@@ -8,6 +8,7 @@ subscription tool, or a metered API every time.
 
 ```
 dispatch run --tier <0|1|2> "<task description>"
+dispatch run --tier <0|1|2> --decompose "<complex multi-part task>"
 ```
 
 You give it two things: the task, and how sensitive the data in it is
@@ -16,12 +17,19 @@ provider allowed at that tier, checks the answer actually looks like an
 answer, and escalates to the next one if not. `--explain` shows the full
 trace.
 
+With `--decompose`, Dispatch first asks an eligible provider (at the *same*
+tier) to split a compound task into self-contained subtasks, then routes each
+subtask independently through the cascade and composes the answers — so a big
+task gets several focused runs instead of one stretched one. Subtasks always
+inherit the run's explicit tier; Dispatch never re-tiers or downgrades them.
+
 ## Features
 
 | | |
 |---|---|
 | ✅ | Tiered routing — explicit `--tier`, never inferred |
 | ✅ | Cascade-with-verification: cheapest eligible provider first, escalates on empty/refused/failed output |
+| ✅ | Optional task decomposition (`--decompose`): split a compound task into subtasks routed at the same tier, then compose the answers |
 | ✅ | Adapters for a local model, a metered API, Codex, and Claude Code — all real installed CLIs, no reimplemented SDKs |
 | ✅ | Argv-array subprocess exec only — no shell-string interpolation |
 | ✅ | Per-run timeout with SIGTERM → SIGKILL escalation |
@@ -29,7 +37,6 @@ trace.
 | ✅ | Local secret-shaped-content scan, non-blocking |
 | ✅ | `--explain` routing trace with per-attempt status and failure reason |
 | 🚧 | Browser-automation adapter (`gaze`) — registered and tier-gated, stub for now |
-| ⬜ | Task decomposition / multi-subtask routing |
 | ⬜ | Shared memory across runs |
 | ⬜ | Desktop overlay UI |
 
@@ -67,15 +74,19 @@ layer itself.
 
 ## Roadmap
 
+- [x] Task decomposition into routed subtasks (v1.1, `--decompose`)
 - [ ] Real `gaze` browser-automation flow, replacing the current stub
-- [ ] Task decomposition into routed subtasks
+- [ ] Concurrent subtask execution / subagent spawning (decomposition currently runs subtasks sequentially)
 - [ ] Shared memory / knowledge store across runs
 - [ ] Broader security-hardening layer beyond the tier gate
 - [ ] Desktop overlay UI
 
 ## Status
 
-v1 covers routing and handoff only. The `gaze` provider is a **documented
+v1 covers routing and handoff only. An optional `--decompose` step (v1.1)
+splits a compound task into same-tier subtasks and composes their answers; see
+the [decomposition spec](docs/superpowers/specs/2026-09-05-dispatch-decomposition-spec.md).
+The `gaze` provider is a **documented
 stub**: registered in the cascade, excluded from Tier 0, but its `run`
 always returns an error instead of driving a real browser — relaying a task
 to a browser chat needs a multi-step flow (navigate, fill, submit, scrape)

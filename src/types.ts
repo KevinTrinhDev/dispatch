@@ -32,3 +32,16 @@ export interface CascadeOutcome {
   finalStatus: "verified" | "unverified" | "all-failed";
   finalProvider: ProviderName | null;
 }
+
+export interface DecomposedSubtask {
+  subtask: string;
+  outcome: CascadeOutcome;
+  durationMs: number;
+}
+
+export interface DecompositionOutcome {
+  decomposed: boolean;
+  subtasks: DecomposedSubtask[];
+  finalOutput: string;
+  finalStatus: CascadeOutcome["finalStatus"];
+}

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { main } from "./cli.js";
 import type { AdapterRegistry } from "./cascade.js";
 import type { ProviderAdapter } from "./types.js";
+import { DECOMPOSE_INSTRUCTION } from "./decompose.js";
 
 function fakeAdapter(name: ProviderAdapter["name"], output: string): ProviderAdapter {
   return {
@@ -183,6 +184,123 @@ describe("main", () => {
       });
 
       expect(confirm).not.toHaveBeenCalled();
+    });
+  });
+
+  it("decomposes a task and composes per-subtask output (--decompose)", async () => {
+    await withTempAuditPath(async (auditLogPath) => {
+      const decomposeFree: ProviderAdapter = {
+        name: "delegate-free",
+        run: async (task) => {
+          if (task.includes(DECOMPOSE_INSTRUCTION)) {
+            return { status: "ok", output: JSON.stringify(["part one", "part two"]), exitCode: 0 };
+          }
+          return { status: "ok", output: `answer for ${task}`, exitCode: 0 };
+        },
+      };
+      const adapters: AdapterRegistry = { "delegate-free": decomposeFree };
+      const stdoutLines: string[] = [];
+
+      const code = await main(
+        ["run", "--tier", "1", "--decompose", "build the whole app"],
+        (s) => stdoutLines.push(s),
+        () => {},
+        { adapters, auditLogPath }
+      );
+
+      expect(code).toBe(0);
+      const combined = stdoutLines.join("");
+      expect(combined).toContain("[subtask 1]");
+      expect(combined).toContain("[subtask 2]");
+      expect(combined).toContain("answer for part one");
+      expect(combined).toContain("answer for part two");
+    });
+  });
+
+  it("writes one per-subtask audit record plus one decomposition summary (--decompose)", async () => {
+    await withTempAuditPath(async (auditLogPath) => {
+      // Long texts whose sensitive tails sit well beyond the 40-char preview.
+      const parentTask = "do not log this private thing " + "x".repeat(60) + " PARENT-SECRET-TAIL-9876";
+      const secretPartOne = "an internal plan detail " + "y".repeat(60) + " SUBTASK-SECRET-TAIL-1234";
+      const decomposeFree: ProviderAdapter = {
+        name: "delegate-free",
+        run: async (task) => {
+          if (task.includes(DECOMPOSE_INSTRUCTION)) {
+            return { status: "ok", output: JSON.stringify([secretPartOne, "part two is public"]), exitCode: 0 };
+          }
+          return { status: "ok", output: `answer for ${task}`, exitCode: 0 };
+        },
+      };
+      const adapters: AdapterRegistry = { "delegate-free": decomposeFree };
+
+      await main(["run", "--tier", "0", "--decompose", parentTask], () => {}, () => {}, {
+        adapters,
+        auditLogPath,
+      });
+
+      const content = await readFile(auditLogPath, "utf-8");
+      const records = content.trim().split("\n").map((l) => JSON.parse(l));
+      expect(records).toHaveLength(3); // 2 subtasks + 1 summary
+      const summary = records.find((r) => r.kind === "decomposition");
+      expect(summary).toBeDefined();
+      expect(summary.subtaskCount).toBe(2);
+      // No tier-0 parent or subtask sensitive tail may leak into the log.
+      expect(content).not.toContain("PARENT-SECRET-TAIL-9876");
+      expect(content).not.toContain("SUBTASK-SECRET-TAIL-1234");
+    });
+  });
+
+  it("falls back to a single run when --decompose cannot produce a valid plan", async () => {
+    await withTempAuditPath(async (auditLogPath) => {
+      const proseAdapter: ProviderAdapter = {
+        name: "delegate-free",
+        run: async (task) => ({ status: "ok", output: `whole answer for ${task}`, exitCode: 0 }),
+      };
+      const adapters: AdapterRegistry = { "delegate-free": proseAdapter };
+      const stdoutLines: string[] = [];
+
+      const code = await main(
+        ["run", "--tier", "1", "--decompose", "do a thing"],
+        (s) => stdoutLines.push(s),
+        () => {},
+        { adapters, auditLogPath }
+      );
+
+      expect(code).toBe(0);
+      const combined = stdoutLines.join("");
+      expect(combined).toContain("whole answer for do a thing");
+      // No decomposition summary was written because decomposition fell back.
+      const content = await readFile(auditLogPath, "utf-8");
+      const records = content.trim().split("\n").map((l) => JSON.parse(l));
+      expect(records.some((r) => r.kind === "decomposition")).toBe(false);
+    });
+  });
+
+  it("prints a per-subtask decomposition trace with --explain", async () => {
+    await withTempAuditPath(async (auditLogPath) => {
+      const decomposeFree: ProviderAdapter = {
+        name: "delegate-free",
+        run: async (task) => {
+          if (task.includes(DECOMPOSE_INSTRUCTION)) {
+            return { status: "ok", output: JSON.stringify(["one", "two"]), exitCode: 0 };
+          }
+          return { status: "ok", output: `answer for ${task}`, exitCode: 0 };
+        },
+      };
+      const adapters: AdapterRegistry = { "delegate-free": decomposeFree };
+      const stdoutLines: string[] = [];
+
+      await main(
+        ["run", "--tier", "1", "--decompose", "--explain", "build it"],
+        (s) => stdoutLines.push(s),
+        () => {},
+        { adapters, auditLogPath }
+      );
+
+      const combined = stdoutLines.join("");
+      expect(combined).toContain("Decomposition trace");
+      expect(combined).toContain("Subtask 1");
+      expect(combined).toContain("Subtask 2");
     });
   });
 });

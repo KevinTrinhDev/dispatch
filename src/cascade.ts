@@ -7,17 +7,21 @@ import type {
   Tier,
 } from "./types.js";
 import { eligibleProviders } from "./rules.js";
-import { verifyOutput } from "./verify.js";
+import { verifyOutput, type VerificationResult } from "./verify.js";
 
 export type AdapterRegistry = Partial<Record<ProviderName, ProviderAdapter>>;
 
-const DEFAULT_TIMEOUT_MS = 120_000;
+export const DEFAULT_TIMEOUT_MS = 120_000;
+
+/** A deterministic, local check deciding whether a provider's output is a usable answer. */
+export type Verifier = (output: string) => VerificationResult;
 
 export async function runCascade(
   task: string,
   tier: Tier,
   adapters: AdapterRegistry,
-  timeoutMs: number = DEFAULT_TIMEOUT_MS
+  timeoutMs: number = DEFAULT_TIMEOUT_MS,
+  verify: Verifier = verifyOutput
 ): Promise<CascadeOutcome> {
   const order = eligibleProviders(tier);
   const attempts: CascadeAttempt[] = [];
@@ -34,7 +38,7 @@ export async function runCascade(
     }
 
     if (result.status === "ok") {
-      const verification = verifyOutput(result.output);
+      const verification = verify(result.output);
       attempts.push({
         provider: providerName,
         result,

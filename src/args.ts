@@ -5,11 +5,12 @@ export interface ParsedArgs {
   tier: Tier;
   task: string;
   explain: boolean;
+  decompose: boolean;
 }
 
 export class ArgsError extends Error {}
 
-const USAGE = 'Usage: dispatch run --tier <0|1|2> "<task>"';
+const USAGE = 'Usage: dispatch run --tier <0|1|2> [--explain] [--decompose] "<task>"';
 
 export function parseArgs(argv: string[]): ParsedArgs {
   if (argv[0] !== "run") {
@@ -18,6 +19,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
 
   let tier: Tier | null = null;
   let explain = false;
+  let decompose = false;
   const positional: string[] = [];
 
   for (let i = 1; i < argv.length; i++) {
@@ -31,6 +33,8 @@ export function parseArgs(argv: string[]): ParsedArgs {
       tier = Number(value) as Tier;
     } else if (arg === "--explain") {
       explain = true;
+    } else if (arg === "--decompose") {
+      decompose = true;
     } else {
       positional.push(arg);
     }
@@ -43,5 +47,5 @@ export function parseArgs(argv: string[]): ParsedArgs {
     throw new ArgsError(`Task description is required. ${USAGE}`);
   }
 
-  return { command: "run", tier, task: positional.join(" "), explain };
+  return { command: "run", tier, task: positional.join(" "), explain, decompose };
 }

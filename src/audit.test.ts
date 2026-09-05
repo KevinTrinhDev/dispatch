@@ -3,7 +3,7 @@ import { describe, expect, it, afterEach } from "vitest";
 import { readFile, rm, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildAuditRecord, appendAuditRecord } from "./audit.js";
+import { buildAuditRecord, buildDecompositionSummaryRecord, appendAuditRecord } from "./audit.js";
 import type { CascadeOutcome } from "./types.js";
 
 const sampleOutcome: CascadeOutcome = {
@@ -98,5 +98,35 @@ describe("appendAuditRecord", () => {
     for (const line of lines) {
       expect(() => JSON.parse(line)).not.toThrow();
     }
+  });
+});
+
+describe("buildDecompositionSummaryRecord", () => {
+  const subtasks = [
+    { status: "verified" as const },
+    { status: "verified" as const },
+    { status: "unverified" as const },
+    { status: "all-failed" as const },
+  ];
+
+  it("redacts the parent task text for tier 0", () => {
+    const record = buildDecompositionSummaryRecord(LONG_SECRET_TASK, 0, subtasks, "unverified", 5000);
+    expect(record.taskPreview.length).toBeLessThanOrEqual(40);
+    expect(JSON.stringify(record)).not.toContain("MIIEowIBAAKCAQEA1234567890");
+    expect(record.taskHash).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it("counts verified and failed subtasks and records the aggregate status", () => {
+    const record = buildDecompositionSummaryRecord("build an app", 2, subtasks, "unverified", 5000);
+    expect(record.subtaskCount).toBe(4);
+    expect(record.verifiedCount).toBe(2);
+    expect(record.failedCount).toBe(1);
+    expect(record.finalStatus).toBe("unverified");
+    expect(record.kind).toBe("decomposition");
+  });
+
+  it("keeps full parent text for tier 2", () => {
+    const record = buildDecompositionSummaryRecord(LONG_SECRET_TASK, 2, subtasks, "verified", 5000);
+    expect(record.taskPreview).toBe(LONG_SECRET_TASK);
   });
 });

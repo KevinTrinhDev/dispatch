@@ -109,4 +109,17 @@ describe("runCascade", () => {
 
     expect(gazeRun).not.toHaveBeenCalled();
   });
+
+  it("escalates when a custom verifier rejects an otherwise-ok output", async () => {
+    const free = fakeAdapter("delegate-free", async () => ({ status: "ok", output: "not json", exitCode: 0 }));
+    const claude = fakeAdapter("claude", async () => ({ status: "ok", output: '["json"]', exitCode: 0 }));
+    const adapters: AdapterRegistry = { "delegate-free": free, claude };
+    const { verifyJsonOutput } = await import("./verify.js");
+
+    const outcome = await runCascade("do a thing", 1, adapters, 120_000, verifyJsonOutput);
+
+    expect(outcome.finalStatus).toBe("verified");
+    expect(outcome.finalProvider).toBe("claude");
+    expect(outcome.attempts.map((a) => a.provider)).toEqual(["delegate-free", "claude"]);
+  });
 });

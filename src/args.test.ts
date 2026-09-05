@@ -9,7 +9,14 @@ describe("parseArgs", () => {
       tier: 1,
       task: "summarize this file",
       explain: false,
+      decompose: false,
     });
+  });
+
+  it("parses the --decompose flag", () => {
+    const result = parseArgs(["run", "--tier", "2", "--decompose", "do the thing"]);
+    expect(result.decompose).toBe(true);
+    expect(result.tier).toBe(2);
   });
 
   it("parses the --explain flag", () => {

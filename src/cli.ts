@@ -4,10 +4,16 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { parseArgs, ArgsError } from "./args.js";
 import { runCascade, type AdapterRegistry } from "./cascade.js";
-import { buildAuditRecord, appendAuditRecord } from "./audit.js";
+import { runDecomposed } from "./decompose.js";
+import {
+  buildAuditRecord,
+  buildDecompositionSummaryRecord,
+  appendAuditRecord,
+} from "./audit.js";
 import { scanForSecrets } from "./secretScan.js";
 import { delegateFreeAdapter, delegateCheapAdapter, codexAdapter, claudeAdapter } from "./adapters/shell.js";
 import { createGazeAdapter } from "./adapters/gaze.js";
+import type { DecompositionOutcome } from "./types.js";
 
 const DEFAULT_AUDIT_LOG_PATH = join(homedir(), ".dispatch", "audit.jsonl");
 
@@ -28,6 +34,33 @@ async function defaultConfirm(question: string): Promise<boolean> {
   }
 }
 
+function attemptLine(attempt: { provider: string; result: { status: string; output?: string; verified?: boolean; reason?: string; message?: string }; verified: boolean }): string {
+  const verifiedNote = attempt.result.status === "ok" ? `, verified=${attempt.verified}` : "";
+  let detail = "";
+  if (attempt.result.status === "partial") {
+    detail = ` (${attempt.result.reason ?? ""})`;
+  } else if (attempt.result.status === "error") {
+    detail = ` (${attempt.result.message ?? ""})`;
+  }
+  return `  - ${attempt.provider}: ${attempt.result.status}${verifiedNote}${detail}`;
+}
+
+function printExplain(outcome: DecompositionOutcome, stdout: (s: string) => void): void {
+  stdout(`Decomposition trace (tier ${outcome.subtasks[0]?.outcome.tier ?? "?"}):\n`);
+  if (outcome.decomposed) {
+    stdout(`  Plan: ${outcome.subtasks.length} subtask(s)\n`);
+  } else {
+    stdout(`  No valid decomposition plan was produced; the whole task ran as one.\n`);
+  }
+  outcome.subtasks.forEach((subtask, i) => {
+    stdout(`  Subtask ${i + 1}: ${subtask.outcome.finalStatus} via ${subtask.outcome.finalProvider ?? "none"}\n`);
+    for (const attempt of subtask.outcome.attempts) {
+      stdout(attemptLine(attempt));
+    }
+  });
+  stdout(`Final: ${outcome.finalStatus} (${outcome.decomposed ? "decomposed" : "single run"})\n\n`);
+}
+
 export async function main(
   argv: string[],
   stdout: (s: string) => void,
@@ -45,7 +78,7 @@ export async function main(
     throw err;
   }
 
-  const { tier, task, explain } = parsed;
+  const { tier, task, explain, decompose } = parsed;
 
   const scan = scanForSecrets(task);
   if (scan.suspicious && tier > 0) {
@@ -73,24 +106,53 @@ export async function main(
       gaze: createGazeAdapter(tier),
     };
 
+  const auditLogPath = deps.auditLogPath ?? DEFAULT_AUDIT_LOG_PATH;
+
+  // Decomposed path: split at the parent tier, route each subtask, compose.
+  if (decompose) {
+    const startedAt = Date.now();
+    const outcome = await runDecomposed(task, tier, adapters);
+    const totalDurationMs = Date.now() - startedAt;
+
+    // Audit every sub-run independently (redaction applies per subtask).
+    for (const subtask of outcome.subtasks) {
+      const record = buildAuditRecord(subtask.subtask, tier, subtask.outcome, subtask.durationMs);
+      await appendAuditRecord(auditLogPath, record);
+    }
+    if (outcome.decomposed) {
+      const summary = buildDecompositionSummaryRecord(
+        task,
+        tier,
+        outcome.subtasks.map((s) => ({ status: s.outcome.finalStatus })),
+        outcome.finalStatus,
+        totalDurationMs
+      );
+      await appendAuditRecord(auditLogPath, summary);
+    }
+
+    if (explain) {
+      printExplain(outcome, stdout);
+    }
+
+    if (outcome.finalStatus === "unverified") {
+      stderr("Warning: one or more parts of the decomposed result could not be verified as real answers.\n");
+    }
+
+    stdout(outcome.finalOutput + "\n");
+    return outcome.finalStatus === "all-failed" ? 1 : 0;
+  }
+
   const startedAt = Date.now();
   const outcome = await runCascade(task, tier, adapters);
   const durationMs = Date.now() - startedAt;
 
   const record = buildAuditRecord(task, tier, outcome, durationMs);
-  await appendAuditRecord(deps.auditLogPath ?? DEFAULT_AUDIT_LOG_PATH, record);
+  await appendAuditRecord(auditLogPath, record);
 
   if (explain) {
     stdout(`Routing trace (tier ${tier}):\n`);
     for (const attempt of outcome.attempts) {
-      const verifiedNote = attempt.result.status === "ok" ? `, verified=${attempt.verified}` : "";
-      let detail = "";
-      if (attempt.result.status === "partial") {
-        detail = ` (${attempt.result.reason})`;
-      } else if (attempt.result.status === "error") {
-        detail = ` (${attempt.result.message})`;
-      }
-      stdout(`  - ${attempt.provider}: ${attempt.result.status}${verifiedNote}${detail}\n`);
+      stdout(attemptLine(attempt));
     }
     stdout(`Final: ${outcome.finalStatus} via ${outcome.finalProvider ?? "none"}\n\n`);
   }
