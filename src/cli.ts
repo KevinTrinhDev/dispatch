@@ -114,9 +114,18 @@ export async function main(
     const outcome = await runDecomposed(task, tier, adapters);
     const totalDurationMs = Date.now() - startedAt;
 
-    // Audit every sub-run independently (redaction applies per subtask).
+    // Audit every provider cascade independently (redaction applies per task).
+    // First the decomposer cascade, then one record per executed subtask.
+    const decomposerRecord = buildAuditRecord(
+      task,
+      tier,
+      outcome.decomposerOutcome,
+      outcome.decomposerDurationMs,
+      "decomposer"
+    );
+    await appendAuditRecord(auditLogPath, decomposerRecord);
     for (const subtask of outcome.subtasks) {
-      const record = buildAuditRecord(subtask.subtask, tier, subtask.outcome, subtask.durationMs);
+      const record = buildAuditRecord(subtask.subtask, tier, subtask.outcome, subtask.durationMs, "subtask");
       await appendAuditRecord(auditLogPath, record);
     }
     if (outcome.decomposed) {

@@ -155,6 +155,20 @@ describe("runDecomposed", () => {
     expect(outcome.finalStatus).toBe("all-failed");
     expect(outcome.finalOutput).toBe("");
   });
+
+  it("honors the shared attempt budget and stops launching subtasks when exhausted", async () => {
+    const free = planningAdapter("delegate-free", ["a", "b"]);
+    const adapters: AdapterRegistry = { "delegate-free": free.adapter };
+    // Budget of 1: consumed entirely by the decomposer cascade, so no subtask runs.
+    const outcome = await runDecomposed("do the thing", 0, adapters, 120_000, { remaining: 1 });
+
+    expect(outcome.decomposed).toBe(true);
+    expect(free.calls).toHaveLength(1); // only the decomposer cascade launched
+    // Both planned subtasks were not executed -> aggregate cannot claim success.
+    expect(outcome.subtasks).toHaveLength(2);
+    expect(outcome.subtasks.every((s) => s.outcome.finalStatus === "all-failed")).toBe(true);
+    expect(outcome.finalStatus).toBe("all-failed");
+  });
 });
 
 describe("planSubtasks", () => {
@@ -166,10 +180,11 @@ describe("planSubtasks", () => {
       },
     };
     const result = await planSubtasks("task", 0, adapters);
-    expect(result?.plan).toEqual(["x", "y"]);
+    expect(result.plan).toEqual(["x", "y"]);
+    expect(result.outcome.finalStatus).toBe("verified");
   });
 
-  it("returns null when no provider returns verifiable JSON", async () => {
+  it("returns a null plan but the cascade outcome when no provider returns a usable plan", async () => {
     const adapters: AdapterRegistry = {
       "delegate-free": {
         name: "delegate-free",
@@ -177,7 +192,19 @@ describe("planSubtasks", () => {
       },
     };
     const result = await planSubtasks("task", 0, adapters);
-    expect(result).toBeNull();
+    expect(result.plan).toBeNull();
+    // The cascade that ran is still returned so its provider launches are auditable.
+    expect(result.outcome.attempts.map((a) => a.provider)).toEqual(["delegate-free"]);
+  });
+
+  it("escalates past wrong-shape-but-valid JSON to a provider that returns a real array", async () => {
+    const objectJson = { name: "delegate-free", run: async () => ({ status: "ok", output: '{"plan":["x","y"]}', exitCode: 0 }) };
+    const arrayJson = { name: "claude", run: async () => ({ status: "ok", output: JSON.stringify(["x", "y"]), exitCode: 0 }) };
+    const adapters: AdapterRegistry = { "delegate-free": objectJson, claude: arrayJson };
+
+    const result = await planSubtasks("task", 1, adapters);
+    expect(result.plan).toEqual(["x", "y"]);
+    expect(result.outcome.attempts.map((a) => a.provider)).toEqual(["delegate-free", "claude"]);
   });
 });
 

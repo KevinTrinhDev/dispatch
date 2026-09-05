@@ -122,4 +122,28 @@ describe("runCascade", () => {
     expect(outcome.finalProvider).toBe("claude");
     expect(outcome.attempts.map((a) => a.provider)).toEqual(["delegate-free", "claude"]);
   });
+
+  it("stops launching providers once the attempt budget is exhausted", async () => {
+    const claudeRun = vi.fn(async () => ({ status: "ok", output: "answer", exitCode: 0 }));
+    const free = fakeAdapter("delegate-free", async () => ({ status: "error", message: "boom" }));
+    const adapters: AdapterRegistry = { "delegate-free": free, claude: fakeAdapter("claude", claudeRun) };
+
+    const outcome = await runCascade("do a thing", 1, adapters, 120_000, undefined, { remaining: 1 });
+
+    // The single budget unit was spent on delegate-free, so claude never launches.
+    expect(claudeRun).not.toHaveBeenCalled();
+    expect(outcome.attempts.map((a) => a.provider)).toEqual(["delegate-free"]);
+    expect(outcome.finalStatus).toBe("all-failed");
+  });
+
+  it("does not consume budget for providers absent from the registry", async () => {
+    const free = fakeAdapter("delegate-free", async () => ({ status: "ok", output: "fine", exitCode: 0 }));
+    const adapters: AdapterRegistry = { "delegate-free": free };
+    const budget = { remaining: 1 };
+
+    const outcome = await runCascade("do a thing", 1, adapters, 120_000, undefined, budget);
+
+    expect(outcome.finalStatus).toBe("verified");
+    expect(budget.remaining).toBe(0); // only the one real launch decremented
+  });
 });

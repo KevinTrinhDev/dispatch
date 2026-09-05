@@ -1,10 +1,17 @@
 import {
   runCascade,
   type AdapterRegistry,
+  type AttemptBudget,
+  type Verifier,
   DEFAULT_TIMEOUT_MS,
 } from "./cascade.js";
-import { verifyJsonOutput } from "./verify.js";
-import type { DecompositionOutcome, DecomposedSubtask, Tier } from "./types.js";
+import type { VerificationResult } from "./verify.js";
+import type {
+  CascadeOutcome,
+  DecompositionOutcome,
+  DecomposedSubtask,
+  Tier,
+} from "./types.js";
 
 // The decomposer step asks an eligible provider (at the parent tier) to return
 // ONLY a JSON array of self-contained subtask strings. Dispatch never reasons
@@ -15,14 +22,20 @@ export const DECOMPOSE_INSTRUCTION =
   'No prose, no numbering outside the strings, no keys. Example: ["step one", "step two"].';
 
 // Valid plan length bounds. MIN guards against a model "decomposing" into a
-// single reworded task (which should just fall back to a normal run). MAX is a
-// safety cap bounding how many provider calls one invocation can trigger.
+// single reworded task (which should just fall back to a normal run). MAX caps
+// how many subtasks one invocation will run. MAX_TOTAL_ATTEMPTS bounds the total
+// number of provider launches across the decomposer cascade and all subtask
+// cascades, so a single --decompose run cannot trigger unbounded subprocess
+// launches regardless of cascading failures.
 export const MIN_SUBTASKS = 2;
 export const MAX_SUBTASKS = 20;
+export const MAX_TOTAL_ATTEMPTS = 40;
 
 export interface SubtaskPlanResult {
-  plan: string[];
-  decompositionOutput: string;
+  /** The cascade that produced (or failed to produce) the subtask plan. */
+  outcome: CascadeOutcome;
+  /** The validated plan, or null when the decomposer did not return a usable one. */
+  plan: string[] | null;
 }
 
 /**
@@ -45,21 +58,33 @@ export function parseSubtaskPlan(output: string): string[] | null {
 }
 
 /**
+ * Verifier for the decomposer cascade. Stronger than verifyJsonOutput: it only
+ * accepts output that is a *usable* subtask plan, so a provider that returns
+ * valid-but-wrong-shape JSON (e.g. {"plan": [...]}) does NOT halt the cascade —
+ * the run escalates to the next eligible provider that may produce a real array.
+ */
+export function verifySubtaskPlan(output: string): VerificationResult {
+  if (parseSubtaskPlan(output) === null) {
+    return { verified: false, reason: "output is not a usable JSON subtask plan" };
+  }
+  return { verified: true, reason: "valid subtask plan" };
+}
+
+/**
  * Run the decomposition step: a single cascade at the parent tier whose output
- * must be a valid JSON subtask plan. Returns the validated plan, or null if no
- * eligible provider produced one (caller should fall back to a normal run).
+ * must be a usable JSON subtask plan. Always returns the cascade outcome so the
+ * caller can audit which providers ran, plus the parsed plan (or null).
  */
 export async function planSubtasks(
   task: string,
   tier: Tier,
   adapters: AdapterRegistry,
-  timeoutMs: number = DEFAULT_TIMEOUT_MS
-): Promise<SubtaskPlanResult | null> {
+  timeoutMs: number = DEFAULT_TIMEOUT_MS,
+  budget?: AttemptBudget
+): Promise<SubtaskPlanResult> {
   const metaTask = `${DECOMPOSE_INSTRUCTION}\n\n${task}`;
-  const outcome = await runCascade(metaTask, tier, adapters, timeoutMs, verifyJsonOutput);
-  const plan = parseSubtaskPlan(outcome.finalOutput);
-  if (!plan) return null;
-  return { plan, decompositionOutput: outcome.finalOutput };
+  const outcome = await runCascade(metaTask, tier, adapters, timeoutMs, verifySubtaskPlan, budget);
+  return { outcome, plan: parseSubtaskPlan(outcome.finalOutput) };
 }
 
 /**
@@ -93,25 +118,36 @@ export function aggregateStatus(subtasks: DecomposedSubtask[]): DecompositionOut
   return "all-failed";
 }
 
+/** A synthetic outcome for a planned subtask that never ran (budget exhausted). */
+function unexecutedOutcome(tier: Tier): CascadeOutcome {
+  return { tier, attempts: [], finalOutput: "", finalStatus: "all-failed", finalProvider: null };
+}
+
 /**
  * Run a task, optionally decomposed. When a decomposer plan is produced, each
  * subtask runs sequentially through the full cascade at the parent tier and the
  * verified outputs are composed. When no usable plan is produced, falls back to
  * a single cascade on the whole task (never dropping or half-running the task).
+ * A shared AttemptBudget bounds total provider launches across all cascades.
  */
 export async function runDecomposed(
   task: string,
   tier: Tier,
   adapters: AdapterRegistry,
-  timeoutMs: number = DEFAULT_TIMEOUT_MS
+  timeoutMs: number = DEFAULT_TIMEOUT_MS,
+  budget: AttemptBudget = { remaining: MAX_TOTAL_ATTEMPTS }
 ): Promise<DecompositionOutcome> {
-  const planned = await planSubtasks(task, tier, adapters, timeoutMs);
+  const decompStartedAt = Date.now();
+  const planned = await planSubtasks(task, tier, adapters, timeoutMs, budget);
+  const decomposerDurationMs = Date.now() - decompStartedAt;
 
-  if (!planned) {
+  if (!planned.plan) {
     const startedAt = Date.now();
-    const outcome = await runCascade(task, tier, adapters, timeoutMs);
+    const outcome = await runCascade(task, tier, adapters, timeoutMs, undefined, budget);
     return {
       decomposed: false,
+      decomposerOutcome: planned.outcome,
+      decomposerDurationMs,
       subtasks: [{ subtask: task, outcome, durationMs: Date.now() - startedAt }],
       finalOutput: outcome.finalOutput,
       finalStatus: outcome.finalStatus,
@@ -120,8 +156,13 @@ export async function runDecomposed(
 
   const subtasks: DecomposedSubtask[] = [];
   for (const subtask of planned.plan) {
+    // Stop launching subtasks once the shared attempt budget is exhausted.
+    if (budget.remaining <= 0) {
+      subtasks.push({ subtask, outcome: unexecutedOutcome(tier), durationMs: 0 });
+      continue;
+    }
     const startedAt = Date.now();
-    const outcome = await runCascade(subtask, tier, adapters, timeoutMs);
+    const outcome = await runCascade(subtask, tier, adapters, timeoutMs, undefined, budget);
     subtasks.push({ subtask, outcome, durationMs: Date.now() - startedAt });
   }
 
@@ -132,6 +173,8 @@ export async function runDecomposed(
 
   return {
     decomposed: true,
+    decomposerOutcome: planned.outcome,
+    decomposerDurationMs,
     subtasks,
     finalOutput,
     finalStatus,

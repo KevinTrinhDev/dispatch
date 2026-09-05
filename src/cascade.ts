@@ -16,19 +16,30 @@ export const DEFAULT_TIMEOUT_MS = 120_000;
 /** A deterministic, local check deciding whether a provider's output is a usable answer. */
 export type Verifier = (output: string) => VerificationResult;
 
+/**
+ * Mutable counter shared across cascades so a decomposed run can bound the
+ * total number of provider launches it triggers (see decompose.runDecomposed).
+ */
+export interface AttemptBudget {
+  remaining: number;
+}
+
 export async function runCascade(
   task: string,
   tier: Tier,
   adapters: AdapterRegistry,
   timeoutMs: number = DEFAULT_TIMEOUT_MS,
-  verify: Verifier = verifyOutput
+  verify: Verifier = verifyOutput,
+  budget?: AttemptBudget
 ): Promise<CascadeOutcome> {
   const order = eligibleProviders(tier);
   const attempts: CascadeAttempt[] = [];
 
   for (const providerName of order) {
+    if (budget && budget.remaining <= 0) break;
     const adapter = adapters[providerName];
     if (!adapter) continue;
+    if (budget) budget.remaining -= 1;
 
     let result: AdapterResult;
     try {

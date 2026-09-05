@@ -41,6 +41,10 @@ export interface DecomposedSubtask {
 
 export interface DecompositionOutcome {
   decomposed: boolean;
+  /** The cascade that attempted to produce the subtask plan (audited so every
+   * provider run — including a failed decomposer attempt — is accounted for). */
+  decomposerOutcome: CascadeOutcome;
+  decomposerDurationMs: number;
   subtasks: DecomposedSubtask[];
   finalOutput: string;
   finalStatus: CascadeOutcome["finalStatus"];

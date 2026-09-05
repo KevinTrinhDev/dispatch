@@ -95,17 +95,21 @@ strings"*, followed by the parent task text. That meta-task is then run through
 the ordinary cascade machinery, **at the parent tier**, but with a JSON output
 verifier instead of the plain-output verifier.
 
-Concretely this needs one small, backward-compatible change to the cascade:
+Concretely this needs a small, backward-compatible change to the cascade:
 `runCascade` gains an optional `verify` argument (defaulting to today's
 `verifyOutput`). The decomposition step calls `runCascade(metaTask, tier,
-adapters, timeoutMs, verifyJsonOutput)`. This reuses, for free:
+adapters, timeoutMs, verifySubtaskPlan)`. This reuses, for free:
 
 - provider selection by tier (cheapest eligible first — local model first),
 - empty/refusal/error escalation to the next eligible provider,
-- the JSON parsing check already present as `verifyJsonOutput` in `verify.ts`.
+- a **shape verifier** (`verifySubtaskPlan`) that only accepts output which is a
+  usable JSON subtask *array*. This is intentionally stronger than
+  `verifyJsonOutput`: a provider returning valid-but-wrong-shape JSON (e.g.
+  `{"plan": [...]}`) is treated as a failed attempt and the run escalates to the
+  next eligible provider, rather than halting the cascade on unhelpful JSON.
 
 If the decomposer returns an array that does not validate (see 4.2), or if no
-eligible provider returns verifiable JSON, **decomposition is abandoned** and
+eligible provider returns a usable plan, **decomposition is abandoned** and
 the whole task falls back to a normal single-cascade run. The caller's task is
 never silently dropped and never half-decomposed.
 
@@ -113,14 +117,20 @@ never silently dropped and never half-decomposed.
 
 The returned JSON must be a non-empty JSON array. Validation rules:
 
-- parse as JSON (already enforced by `verifyJsonOutput`);
-- is an array;
+- is a JSON array of strings;
 - length between `2` and `DECOMP_MAX_SUBTASKS` (a small safety cap, see code —
-  bounds the number of provider calls one invocation can trigger);
+  bounds the number of subtasks one invocation can trigger);
 - every element is a string whose trimmed value is non-empty.
 
 If `1` is returned, that is treated as "no real decomposition" and falls back
 (equivalent to refusing to split). Anything else invalid also falls back.
+
+In addition, the whole decomposed run shares one **attempt budget**
+(`MAX_TOTAL_ATTEMPTS`, default 40) threaded through the decomposer cascade and
+every subtask cascade, so a single `--decompose` invocation cannot trigger an
+unbounded number of provider launches regardless of how many cascading failures
+occur. `runCascade` consumes a budget unit only for providers actually present
+in the registry, and stops launching once the budget is exhausted.
 
 ### 4.3 Executing subtasks
 
@@ -173,16 +183,22 @@ because a subtask string is a separate data payload: for a tier 0/1 run the
 log must never contain a subtask's full text, only its ≤40-char preview and
 SHA-256 hash.
 
-So a decomposed run appends:
+So a decomposed run appends, in order:
 
-1. one normal per-subtask audit record for every subtask's cascade
-   (`buildAuditRecord` + `appendAuditRecord`, unchanged redaction), plus
-2. one aggregate **decomposition summary** record capturing the parent task's
+1. one audit record for the **decomposer cascade** (role `"decomposer"`), so the
+   provider run(s) that produced the plan are always accounted for — including
+   on the fallback path where the decomposer attempt fails and the plan is
+   abandoned, its real subprocess invocations are still logged;
+2. one per-subtask audit record for every subtask's cascade (role `"subtask"`,
+   `buildAuditRecord` + `appendAuditRecord`, unchanged redaction);
+3. one aggregate **decomposition summary** record capturing the parent task's
    redacted preview/hash, subtask count, verified/failed counts, aggregate
    status, and total wall-clock time.
 
-This keeps per-work proof (the audit trail for each provider run) and gives one
-record that describes the decomposition as a unit.
+Every audit record carries a `role` (`"run"` / `"decomposer"` / `"subtask"`) so
+a consumer can tell which provider cascade a given record describes. This keeps
+per-work proof (the audit trail for each provider run) and gives one record that
+describes the decomposition as a unit.
 
 ## 7. Verification / refusals
 
@@ -219,3 +235,49 @@ verified parts does not need a second global check. Aggregate status (section
   fields correct.
 - `--decompose` without `--tier` still errors; `--decompose` off-path behaves
   exactly like v1.
+
+## 10. Independent hardening review (revision 1)
+
+This spec and the accompanying implementation were run through an independent
+adversarial security/architecture review after the initial implementation, to
+close the gap noted in §2 that it had not seen v1's four-reviewer process.
+Verdict: **no Critical or High findings** — the tier invariant holds on every
+path, execution is argv-array `execa` (no shell injection), and per-subtask
+audit redaction is correct at the parent tier.
+
+Resolved findings (all incorporated and covered by tests):
+
+- **F1 (Medium) — decomposer cascade not audited.** The decomposer cascade is
+  now returned by `planSubtasks`, exposed on the outcome, and appended as a
+  `role:"decomposer"` audit record — so a failed decomposer attempt's real
+  provider launches are never silently unlogged. (§6)
+- **F2 (Medium) — no global resource budget.** `runDecomposed` now threads a
+  shared `AttemptBudget` through the decomposer cascade and every subtask
+  cascade, and stops launching once exhausted. Default
+  `MAX_TOTAL_ATTEMPTS = 40` bounds total provider launches behind the
+  20-subtask × ≤5-provider × timeout worst case. `runCascade` decrements the
+  budget only for providers actually present in the registry. (§4)
+- **F3 (Medium) — verifier weaker than validator.** The decomposer cascade now
+  uses a shape verifier (`verifySubtaskPlan`) that only accepts output which is
+  a *usable* JSON subtask array, so a provider returning valid-but-wrong-shape
+  JSON (e.g. `{"plan": [...]}`) no longer halts the cascade — it escalates to
+  the next eligible provider. (§4.1)
+
+Deferred (documented, low risk, not blocking):
+
+- F4 partial-failure UX: an `unverified` composed answer still prints empty
+  `[subtask N]` delimiters around failed parts; aggregate status stays honest.
+- F5 subtask content is not independently re-scanned for secret-shaped text
+  before reaching cloud providers (the parent scan already covers it).
+- F6 leading-`-` subtask text is passed as a positional argv (no shell
+  injection; a provider may interpret it as a flag — model-controlled bytes).
+- F7 a valid plan whose subtasks all fail returns `all-failed` rather than
+  retrying the whole task (deliberate: avoids doubling cost after a clean
+  decomposition failure).
+- F8 cosmetic: `MAX_SUBTASKS=20` is wider than the prompt's "2–6" hint.
+
+## 11. Revision history
+
+- 2026-09-05 (rev 0): initial spec.
+- 2026-09-05 (rev 1): independent hardening review; added §10 and integrated
+  F1/F2/F3 fixes into §4/§6.

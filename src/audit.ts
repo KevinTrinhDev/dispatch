@@ -9,9 +9,12 @@ const PREVIEW_LENGTH = 40;
 // interleave (spec section 6). Cap it well below typical PIPE_BUF sizes.
 const MAX_TIER_2_PREVIEW_LENGTH = 4000;
 
+export type AuditRole = "run" | "decomposer" | "subtask";
+
 export interface AuditRecord {
   timestamp: string;
   tier: Tier;
+  role: AuditRole;
   taskPreview: string;
   taskHash: string;
   attempts: { provider: string; status: string; verified: boolean }[];
@@ -51,13 +54,15 @@ export function buildAuditRecord(
   task: string,
   tier: Tier,
   outcome: CascadeOutcome,
-  durationMs: number
+  durationMs: number,
+  role: AuditRole = "run"
 ): AuditRecord {
   const { preview, taskHash } = redactTaskText(tier, task);
 
   return {
     timestamp: new Date().toISOString(),
     tier,
+    role,
     taskPreview: preview,
     taskHash,
     attempts: outcome.attempts.map((a) => ({

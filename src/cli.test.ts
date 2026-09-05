@@ -240,10 +240,12 @@ describe("main", () => {
 
       const content = await readFile(auditLogPath, "utf-8");
       const records = content.trim().split("\n").map((l) => JSON.parse(l));
-      expect(records).toHaveLength(3); // 2 subtasks + 1 summary
+      expect(records).toHaveLength(4); // decomposer + 2 subtasks + summary
       const summary = records.find((r) => r.kind === "decomposition");
       expect(summary).toBeDefined();
       expect(summary.subtaskCount).toBe(2);
+      // The decomposer cascade is audited as its own record.
+      expect(records.some((r) => r.role === "decomposer")).toBe(true);
       // No tier-0 parent or subtask sensitive tail may leak into the log.
       expect(content).not.toContain("PARENT-SECRET-TAIL-9876");
       expect(content).not.toContain("SUBTASK-SECRET-TAIL-1234");
