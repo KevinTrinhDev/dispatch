@@ -36,6 +36,30 @@ export interface DecompositionSummaryRecord {
   durationMs: number;
 }
 
+export interface RecallRecord {
+  kind: "recall";
+  timestamp: string;
+  tier: Tier;
+  taskPreview: string;
+  taskHash: string;
+  /** Preview of the recalled output, so the audit trail stays bounded/redacted. */
+  outputPreview: string;
+  storedAt: string;
+}
+
+export function buildRecallRecord(task: string, tier: Tier, storedAt: string, output: string): RecallRecord {
+  const { preview, taskHash } = redactTaskText(tier, task);
+  return {
+    kind: "recall",
+    timestamp: new Date().toISOString(),
+    tier,
+    taskPreview: preview,
+    taskHash,
+    outputPreview: output.slice(0, PREVIEW_LENGTH),
+    storedAt,
+  };
+}
+
 function hash(text: string): string {
   return createHash("sha256").update(text).digest("hex");
 }
@@ -101,7 +125,7 @@ export function buildDecompositionSummaryRecord(
   };
 }
 
-export type AuditLogRecord = AuditRecord | DecompositionSummaryRecord;
+export type AuditLogRecord = AuditRecord | DecompositionSummaryRecord | RecallRecord;
 
 export async function appendAuditRecord(logPath: string, record: AuditLogRecord): Promise<void> {
   await mkdir(dirname(logPath), { recursive: true });

@@ -9,14 +9,17 @@ import { runDecomposed } from "./decompose.js";
 import {
   buildAuditRecord,
   buildDecompositionSummaryRecord,
+  buildRecallRecord,
   appendAuditRecord,
 } from "./audit.js";
+import { storeVerified, recallExact } from "./memory.js";
 import { scanForSecrets } from "./secretScan.js";
 import { delegateFreeAdapter, delegateCheapAdapter, codexAdapter, claudeAdapter } from "./adapters/shell.js";
 import { createGazeAdapter } from "./adapters/gaze.js";
 import type { DecompositionOutcome } from "./types.js";
 
 const DEFAULT_AUDIT_LOG_PATH = join(homedir(), ".dispatch", "audit.jsonl");
+const DEFAULT_KNOWLEDGE_PATH = join(homedir(), ".dispatch", "knowledge.jsonl");
 
 const require = createRequire(import.meta.url);
 const packageJson = require("../package.json") as { name: string; version: string };
@@ -24,7 +27,7 @@ const packageJson = require("../package.json") as { name: string; version: strin
 export const HELP_TEXT = `dispatch — routes a task to the right AI provider CLI, by data tier.
 
 Usage:
-  dispatch run --tier <0|1|2> [--explain] [--decompose] [--parallel <N>] "<task>"
+  dispatch run --tier <0|1|2> [--explain] [--decompose] [--parallel <N>] [--recall] "<task>"
   dispatch --help | -h
   dispatch --version | -v
 
@@ -43,10 +46,14 @@ Options for "run":
   --parallel <N>       With --decompose, run up to N subtasks concurrently
                        (default: sequential). Only use for independent subtasks;
                        concurrent runs may interleave side effects.
+  --recall             Remember and reuse verified results across runs. Only
+                       tier 2 (already-public) content is ever stored or recalled;
+                       private tiers always run fresh. No effect with --decompose.
   --explain            Print the routing trace: which providers ran and why.
 
 Examples:
   dispatch run --tier 0 "what public key format is this?"
+  dispatch run --tier 2 --recall "what does the Apache-2.0 LICENSE require?"
   dispatch run --tier 2 --decompose "write a script, its README, and a test"
 
 Every run appends a tier-redacted record to ~/.dispatch/audit.jsonl.
@@ -55,6 +62,7 @@ Every run appends a tier-redacted record to ~/.dispatch/audit.jsonl.
 export interface MainDeps {
   adapters?: AdapterRegistry;
   auditLogPath?: string;
+  knowledgePath?: string;
   isTTY?: boolean;
   confirm?: (question: string) => Promise<boolean>;
 }
@@ -123,7 +131,7 @@ export async function main(
     throw err;
   }
 
-  const { tier, task, explain, decompose, parallel } = parsed;
+  const { tier, task, explain, decompose, parallel, recall } = parsed;
 
   const scan = scanForSecrets(task);
   if (scan.suspicious && tier > 0) {
@@ -152,9 +160,13 @@ export async function main(
     };
 
   const auditLogPath = deps.auditLogPath ?? DEFAULT_AUDIT_LOG_PATH;
+  const knowledgePath = deps.knowledgePath ?? DEFAULT_KNOWLEDGE_PATH;
 
   // Decomposed path: split at the parent tier, route each subtask, compose.
   if (decompose) {
+    if (recall) {
+      stderr("Note: --recall only applies to a single run, not --decompose; ignored.\n");
+    }
     const startedAt = Date.now();
     const outcome = await runDecomposed(task, tier, adapters, undefined, undefined, parallel ?? 1);
     const totalDurationMs = Date.now() - startedAt;
@@ -200,12 +212,33 @@ export async function main(
     stderr("Note: --parallel only applies with --decompose; ignored for this single run.\n");
   }
 
+  // Recall: if --recall and a prior verified tier-2 result matches exactly,
+  // return it without spending a provider call.
+  if (recall) {
+    const remembered = await recallExact(knowledgePath, task, tier);
+    if (remembered) {
+      const recallRecord = buildRecallRecord(task, tier, remembered.storedAt, remembered.output);
+      await appendAuditRecord(auditLogPath, recallRecord);
+      if (explain) {
+        stdout(`Recalled (tier ${tier}): stored ${remembered.storedAt} via ${remembered.finalProvider ?? "unknown"}\n\n`);
+      }
+      stderr("(recalled from knowledge store; no provider run)\n");
+      stdout(remembered.output + "\n");
+      return 0;
+    }
+  }
+
   const startedAt = Date.now();
   const outcome = await runCascade(task, tier, adapters);
   const durationMs = Date.now() - startedAt;
 
   const record = buildAuditRecord(task, tier, outcome, durationMs);
   await appendAuditRecord(auditLogPath, record);
+
+  // With --recall, remember a verified result so a later run can reuse it.
+  if (recall && outcome.finalStatus === "verified") {
+    await storeVerified(knowledgePath, task, tier, outcome.finalOutput, outcome.finalProvider);
+  }
 
   if (explain) {
     stdout(`Routing trace (tier ${tier}):\n`);

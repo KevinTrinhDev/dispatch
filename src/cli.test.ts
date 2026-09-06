@@ -264,6 +264,53 @@ describe("main", () => {
     });
   });
 
+  it("--recall stores a verified tier-2 result and reuses it on a repeat run", async () => {
+    await withTempAuditPath(async (auditLogPath) => {
+      const knowledgePath = auditLogPath.replace("audit.jsonl", "knowledge.jsonl");
+      const run = vi.fn(async () => ({ status: "ok", output: "the public answer", exitCode: 0 }));
+      const adapters: AdapterRegistry = { "delegate-free": { name: "delegate-free", run } };
+
+      await main(["run", "--tier", "2", "--recall", "what is X"], () => {}, () => {}, {
+        adapters,
+        auditLogPath,
+        knowledgePath,
+      });
+      expect(run).toHaveBeenCalledTimes(1);
+
+      // Second identical run recalls instead of re-invoking the provider.
+      const stdoutLines: string[] = [];
+      await main(["run", "--tier", "2", "--recall", "what is X"], (s) => stdoutLines.push(s), () => {}, {
+        adapters,
+        auditLogPath,
+        knowledgePath,
+      });
+      expect(run).toHaveBeenCalledTimes(1); // still 1 -> provider was not re-run
+      expect(stdoutLines.join("")).toContain("the public answer");
+    });
+  });
+
+  it("--recall never stores or reuses private (tier 0) content", async () => {
+    await withTempAuditPath(async (auditLogPath) => {
+      const knowledgePath = auditLogPath.replace("audit.jsonl", "knowledge.jsonl");
+      const run = vi.fn(async () => ({ status: "ok", output: "secret answer", exitCode: 0 }));
+      const adapters: AdapterRegistry = { "delegate-free": { name: "delegate-free", run } };
+
+      await main(["run", "--tier", "0", "--recall", "my secret task"], () => {}, () => {}, {
+        adapters,
+        auditLogPath,
+        knowledgePath,
+      });
+      await main(["run", "--tier", "0", "--recall", "my secret task"], () => {}, () => {}, {
+        adapters,
+        auditLogPath,
+        knowledgePath,
+      });
+
+      // Ran fresh both times: nothing was stored, nothing was recalled.
+      expect(run).toHaveBeenCalledTimes(2);
+    });
+  });
+
   it("writes one per-subtask audit record plus one decomposition summary (--decompose)", async () => {
     await withTempAuditPath(async (auditLogPath) => {
       // Long texts whose sensitive tails sit well beyond the 40-char preview.

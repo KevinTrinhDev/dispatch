@@ -8,12 +8,14 @@ export interface ParsedArgs {
   decompose: boolean;
   /** Max subtasks run concurrently when --decompose is set. null = sequential. */
   parallel: number | null;
+  /** Recall a prior verified tier-2 result instead of re-running. */
+  recall: boolean;
 }
 
 export class ArgsError extends Error {}
 
 const USAGE =
-  'Usage: dispatch run --tier <0|1|2> [--explain] [--decompose] [--parallel <N>] "<task>"';
+  'Usage: dispatch run --tier <0|1|2> [--explain] [--decompose] [--parallel <N>] [--recall] "<task>"';
 
 export function parseArgs(argv: string[]): ParsedArgs {
   if (argv[0] !== "run") {
@@ -24,6 +26,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
   let explain = false;
   let decompose = false;
   let parallel: number | null = null;
+  let recall = false;
   const positional: string[] = [];
 
   for (let i = 1; i < argv.length; i++) {
@@ -46,6 +49,8 @@ export function parseArgs(argv: string[]): ParsedArgs {
         throw new ArgsError(`--parallel needs a positive integer (subtasks run at once), got "${value ?? ""}". ${USAGE}`);
       }
       parallel = Number(value);
+    } else if (arg === "--recall") {
+      recall = true;
     } else {
       positional.push(arg);
     }
@@ -58,5 +63,5 @@ export function parseArgs(argv: string[]): ParsedArgs {
     throw new ArgsError(`Task description is required. ${USAGE}`);
   }
 
-  return { command: "run", tier, task: positional.join(" "), explain, decompose, parallel };
+  return { command: "run", tier, task: positional.join(" "), explain, decompose, parallel, recall };
 }

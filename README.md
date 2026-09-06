@@ -8,6 +8,7 @@ subscription tool, or a metered API every time.
 
 ```
 dispatch run --tier <0|1|2> "<task description>"
+dispatch run --tier <0|1|2> --recall "<repeat public task>"
 dispatch run --tier <0|1|2> --decompose "<complex multi-part task>"
 dispatch run --tier <0|1|2> --decompose --parallel 4 "<complex multi-part task>"
 ```
@@ -25,7 +26,10 @@ task gets several focused runs instead of one stretched one. Subtasks always
 inherit the run's explicit tier; Dispatch never re-tiers or downgrades them.
 
 `dispatch --help` lists every flag; `dispatch --version` prints the version.
-Every run appends a tier-redacted record to `~/.dispatch/audit.jsonl`.
+Every run appends a tier-redacted record to `~/.dispatch/audit.jsonl`. With
+`--recall`, verified **tier-2 (public)** results are remembered in
+`~/.dispatch/knowledge.jsonl` and reused on repeat runs — private tiers are
+never cached.
 
 ## Features
 
@@ -35,6 +39,7 @@ Every run appends a tier-redacted record to `~/.dispatch/audit.jsonl`.
 | ✅ | Cascade-with-verification: cheapest eligible provider first, escalates on empty/refused/failed output |
 | ✅ | Optional task decomposition (`--decompose`): split a compound task into subtasks routed at the same tier, then compose the answers |
 | ✅ | Optional concurrent subtasks (`--decompose --parallel <N>`): run up to N subtasks at once (default sequential) |
+| ✅ | Optional shared memory (`--recall`): reuse prior verified tier-2 (public) results across runs — private tiers are never cached |
 | ✅ | Adapters for a local model, a metered API, Codex, and Claude Code — all real installed CLIs, no reimplemented SDKs |
 | ✅ | Argv-array subprocess exec only — no shell-string interpolation |
 | ✅ | Per-run timeout with SIGTERM → SIGKILL escalation |
@@ -42,7 +47,6 @@ Every run appends a tier-redacted record to `~/.dispatch/audit.jsonl`.
 | ✅ | Local secret-shaped-content scan, non-blocking |
 | ✅ | `--explain` routing trace with per-attempt status and failure reason |
 | 🚧 | Browser-automation adapter (`gaze`) — registered and tier-gated, stub for now |
-| ⬜ | Shared memory across runs |
 | ⬜ | Desktop overlay UI |
 
 ## Data tiers
@@ -70,7 +74,7 @@ data-sensitivity tier, not on how capable a harness looks in a benchmark.
 | What it is | A router in front of existing CLIs | A full plugin-based agent runtime | A full terminal-native coding agent | A full model-agnostic agent with memory |
 | Has its own agent loop / tools | No — delegates to installed CLIs | Yes | Yes | Yes |
 | Primary routing key | Data-sensitivity tier | N/A (one agent per session) | Model choice, not sensitivity | N/A |
-| Persistent memory | No (v1) | Plugin-dependent | No | Yes, core feature |
+| Persistent memory | Opt-in, tier-2 only (`--recall`) | Plugin-dependent | No | Yes, core feature |
 | License | Apache-2.0 | MIT | MIT | Open source |
 
 None of these route *across* other agents by data sensitivity — they're
@@ -81,17 +85,20 @@ layer itself.
 
 - [x] Task decomposition into routed subtasks (v1.1, `--decompose`)
 - [x] Concurrent subtask execution within a decomposed run (`--decompose --parallel <N>`, opt-in)
+- [x] Shared memory / knowledge store across runs (`--recall`, tier-2 only)
 - [ ] Real `gaze` browser-automation flow, replacing the current stub
 - [ ] Standalone subagent spawning / long-lived concurrent agents (beyond one run's subtasks)
-- [ ] Shared memory / knowledge store across runs
 - [ ] Broader security-hardening layer beyond the tier gate
 - [ ] Desktop overlay UI
 
 ## Status
 
-v1 covers routing and handoff only. An optional `--decompose` step (v1.1)
-splits a compound task into same-tier subtasks and composes their answers; see
-the [decomposition spec](docs/superpowers/specs/2026-09-05-dispatch-decomposition-spec.md).
+v1 covers routing and handoff only. Optional additions (v1.1): `--decompose`
+splits a compound task into same-tier subtasks and composes their answers (see
+the [decomposition spec](docs/superpowers/specs/2026-09-05-dispatch-decomposition-spec.md));
+`--parallel <N>` runs those subtasks concurrently; and `--recall` reuses prior
+verified **tier-2** results across runs (see the
+[memory spec](docs/superpowers/specs/2026-09-05-dispatch-memory-spec.md)).
 The `gaze` provider is a **documented
 stub**: registered in the cascade, excluded from Tier 0, but its `run`
 always returns an error instead of driving a real browser — relaying a task

@@ -11,7 +11,13 @@ describe("parseArgs", () => {
       explain: false,
       decompose: false,
       parallel: null,
+      recall: false,
     });
+  });
+
+  it("parses the --recall flag", () => {
+    const result = parseArgs(["run", "--tier", "2", "--recall", "do the thing"]);
+    expect(result.recall).toBe(true);
   });
 
   it("parses the --parallel flag", () => {
